@@ -1,0 +1,22 @@
+{
+    "mongo": {
+        "database1": {
+            "collection1": {
+                "document1": {
+                    "name": "file_name",
+                    "raw": ["raw_fragments"],
+                    "faiss_id": ["some_num id"]
+                }
+            }
+        }
+    },
+    "faiss": {
+        "database1": {
+            "collection1": {
+                "faiss_id1": "embedding",
+                "faiss_id2": "embedding",
+                "faiss_id3": "embedding"
+            }
+        }
+    }
+}
