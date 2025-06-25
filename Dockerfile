@@ -24,7 +24,8 @@ RUN apt update && apt install -y \
 # Instalar Tesseract ocr
 RUN apt update && apt install -y \
     tesseract-ocr \
-    libtesseract-dev
+    libtesseract-dev \
+    poppler-utils
 
 # Instalar MongoDB
 RUN apt install -y mongodb && \

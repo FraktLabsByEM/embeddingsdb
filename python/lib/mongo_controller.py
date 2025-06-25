@@ -127,7 +127,7 @@ class MongoController:
         """
         collection = self.client[db][collection_name]
         try:
-            result = collection.update_one(query, {'$set': new_values})
+            collection.update_one(query, {'$set': new_values})
             return True
             # return jsonify({ "status": "ok", "code": 200, "message": f"{result.modified_count } Document(s) succesfully updated in '{db}.{collection_name}'.", "count": result.modified_count })
         except PyMongoError as e:

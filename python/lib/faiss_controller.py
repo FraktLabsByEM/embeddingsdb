@@ -1,4 +1,5 @@
 import os
+import json
 import faiss
 import time
 import gc  # Garbage collector for memory management
@@ -8,11 +9,13 @@ class FaissController:
     def __init__(self, base_path="/appdata/faiss"):
         """Initialize FaissController with a predefined storage path."""
         self.base_path = base_path  # Base directory for storing indexes
+        
         self.indexes = {}  # Dictionary to store references to loaded indexes in RAM
 
         # Ensure the base directory exists
         if not os.path.exists(self.base_path):
-            os.makedirs(self.base_path)
+            os.makedirs(self.base_path) 
+                
 
     def _import(self, db, collection):
         """Load a Faiss index from disk and store it in RAM."""
@@ -32,6 +35,7 @@ class FaissController:
             "timestamp": time.time()  # Store current timestamp
         }
         return index
+    
     
     def _export(self, db, collection):
         """Save a Faiss index from RAM to disk."""
@@ -55,6 +59,7 @@ class FaissController:
         print(f"Index saved: {index_path}")
         return True
     
+    
     def unmount(self, db, collection):
         """Remove a Faiss index from RAM to free memory."""
         key = f"{db}/{collection}"
@@ -68,6 +73,7 @@ class FaissController:
             print(f"Index not found in RAM: {key}")
             return False
         
+        
     def check_time(self):
         """Return the last interaction timestamp of all mounted indices."""
         if not self.indexes:
@@ -79,28 +85,35 @@ class FaissController:
         }
 
         return timestamps
-
+    
+    
     def add(self, db, collection, embeddings):
         """Add new embeddings to a Faiss index and return assigned IDs."""
         key = f"{db}/{collection}"
-
         # Ensure the index is loaded in RAM
         if key not in self.indexes:
             index = self._import(db, collection)
             if index is None:
                 print(f"Creating new index for {key}")
                 d = len(embeddings[0])  # Dimensionality of embeddings
-                index = faiss.IndexIDMap(faiss.IndexHNSWFlat(d, 32))  # Create a new index
-                index.hnsw.efConstruction = 80 # Construction "quality"
+                base_index = faiss.IndexHNSWFlat(d, 32)
+                base_index.efSearch = 64
+                base_index.efConstruction = 80 # Construction "quality"
+                index = faiss.IndexIDMap(base_index)
+                # Create ids
                 self.indexes[key] = {"ref": index, "timestamp": time.time()}
-            # Evaluated graphs while insertion
-            index.hnsw.efSearch = 64
 
         index = self.indexes[key]["ref"]  # Get the Faiss index reference
 
         # Generate unique IDs for each embedding
-        existing_ids = set(int(index.id_map.at(i)) for i in range(index.id_map.size())) if hasattr(index, "id_map") and index.id_map.size() > 0 else set()
-        new_ids = np.arange(len(existing_ids), len(existing_ids) + len(embeddings))
+        # existing_ids = set(int(index.id_map.at(i)) for i in range(index.id_map.size())) if hasattr(index, "id_map") and index.id_map.size() > 0 else set()
+        # new_ids = np.arange(len(existing_ids), len(existing_ids) + len(embeddings))
+        new_start = 0
+        if hasattr(index, "id_map") and index.id_map.size() > 0:
+            existing_ids = set(int(index.id_map.at(i)) for i in range(index.id_map.size()))
+            new_start = max(existing_ids) + 1
+
+        new_ids = np.arange(new_start, new_start + len(embeddings), dtype='int64')
 
         # Convert embeddings to NumPy array and add them to Faiss
         embeddings = np.array(embeddings, dtype=np.float32)
@@ -112,6 +125,7 @@ class FaissController:
         print(f"Added {len(embeddings)} embeddings to {key}")
         self._export(db, collection)
         return new_ids.tolist()  # Return assigned IDs
+
 
     def search(self, db, collection, query_embedding, k=5):
         """Search for the k most similar embeddings in a Faiss index and return their IDs with distances."""
@@ -140,54 +154,7 @@ class FaissController:
 
         print(f"Search completed on {key}: {results}")
         return results  # Return dictionary {id: distance}
-
-    def delete(self, db, collection, ids):
-        """Remove embeddings from a Faiss index by their IDs."""
-        key = f"{db}/{collection}"
-
-        # Ensure the index is loaded in RAM
-        if key not in self.indexes:
-            index = self._import(db, collection)
-            if index is None:
-                print(f"Index not found: {key}")
-                return False
-
-        index = self.indexes[key]["ref"]  # Get the Faiss index reference
-
-        # Convert IDs to NumPy array
-        ids = np.array(ids, dtype=np.int64)
-
-        # Remove embeddings
-        index.remove_ids(ids)
-
-        # Update timestamp
-        self.indexes[key]["timestamp"] = time.time()
-
-        print(f"Deleted {len(ids)} embeddings from {key}")
-        self._export(db, collection)
-        return True
-
-    def replace(self, db, collection, ids, new_embeddings):
-        """Replace existing embeddings in a Faiss index by deleting old ones and adding new ones."""
-        
-        # Ensure the index is loaded in RAM
-        key = f"{db}/{collection}"
-        if key not in self.indexes:
-            index = self._import(db, collection)
-            if index is None:
-                print(f"Index not found: {key}")
-                return False
-
-        # Step 1: Delete old embeddings
-        if ids:
-            self.delete(db, collection, ids)  # Use existing delete method
-
-        # Step 2: Add new embeddings
-        new_ids = self.add(db, collection, new_embeddings)  # Use existing add method
-        
-        self._export(db, collection)
-        # Return the new assigned IDs
-        return new_ids if new_ids else False
+    
     
     def delete_index(self, db, collection):
         """Delete a Faiss index from disk and unmount it from RAM."""

@@ -1,6 +1,7 @@
 import base64
 import io
 import os
+import re
 import tempfile
 import soundfile as sf
 import torch
@@ -86,9 +87,10 @@ class UniversalEmbedder:
                 return self.embed_text(data["text"], storable)
             else:
                 # Retrieve base64 header
-                header = data["input"].split(",")[0]
+                header, content = data["input"].split(",")
+                header = header.split(":")[1].split(";")[0]
                 # Retrieve base64 content
-                content = data["input"].split(",")[1]
+                print(header)
                 decoded_data = base64.b64decode(content)
                 
                 # Plain text types
@@ -113,6 +115,7 @@ class UniversalEmbedder:
                         for page in reader.pages:
                             page_text = page.extract_text()
                             if page_text:
+                                page_text = page_text.replace("\n", "")
                                 chunks.append(page_text)
                     
                     # Convert PDF pages to images for OCR
@@ -197,7 +200,7 @@ class UniversalEmbedder:
                     
                     return {
                         "bytes": embeddings,
-                        "raw": chunks
+                        "raw": [data]
                     }
 
                 # Audios (MP3, WAV, OGG, AAC)

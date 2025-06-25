@@ -15,6 +15,7 @@ tf-keras==2.19.0
 faiss-cpu==1.11.0
 numpy<2
 scipy==1.13.1
+decord==0.6.0
 
 # Modelos de embeddings de texto
 transformers==4.51.3
