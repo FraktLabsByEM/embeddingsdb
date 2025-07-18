@@ -41,7 +41,41 @@ def add(db, coll, input, name):
         return faiss_ids, False
     except Exception as err:
         return False, err
+
+
+@app.route("/v1/embeddings/<string:db>/<string:coll>/create", methods=["POST"])
+def create_index(db, coll):
+    """
+    Crea un nuevo índice Faiss vacío.
     
+    Expected JSON body:
+        - neightboors (int): Número de vecinos para el índice HNSW
+        - length (int): Dimensión de los vectores a almacenar
+    """
+    try:
+        request_data = request.get_json()
+        if not request_data:
+            return jsonify({"error": "Invalid request format"}), 400
+        
+        neightboors = request_data.get("neightboors")
+        ln = request_data.get("length")
+
+        if neightboors is None or ln is None:
+            return jsonify({"error": "Missing required fields: 'neightboors' and/or 'length'"}), 400
+
+        result = faiss.create(db, coll, neightboors, ln)
+
+        if result is True:
+            return jsonify({"message": f"Index {db}/{coll} created successfully"}), 200
+        elif isinstance(result, dict) and "error" in result:
+            return jsonify(result), 400
+        else:
+            return jsonify({"error": "Unknown error occurred during index creation"}), 500
+
+    except Exception as e:
+        print(f"Error in create_index(): {e}")
+        return jsonify({"error": str(e)}), 500
+
 
 # ----- ENDPOINTS -----
 @app.route("/v1/embeddings", methods=["POST"])
