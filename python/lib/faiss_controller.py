@@ -1,5 +1,4 @@
 import os
-import json
 import faiss
 import time
 import gc  # Garbage collector for memory management
@@ -86,22 +85,32 @@ class FaissController:
 
         return timestamps
     
+    def create(self, db, collection, neightboors, ln):
+        try:
+            key = f"{db}/{collection}"
+            if key in self.indexes:
+                index = self._import(db, collection)
+                if index is None:
+                    return { "error": f"Index '{db}/{collection}' already exists" }
+            print(f"Creating new index for {key}")
+            base_index = faiss.IndexHNSWFlat(ln, neightboors)
+            base_index.efSearch = 64
+            base_index.efConstruction = 80 # Construction "quality"
+            index = faiss.IndexIDMap(base_index)
+            # Create ids
+            self.indexes[key] = {"ref": index, "timestamp": time.time()}
+            return True
+        except Exception as err:
+            print(err)
+            return { "error": err }
+    
     
     def add(self, db, collection, embeddings):
         """Add new embeddings to a Faiss index and return assigned IDs."""
         key = f"{db}/{collection}"
         # Ensure the index is loaded in RAM
         if key not in self.indexes:
-            index = self._import(db, collection)
-            if index is None:
-                print(f"Creating new index for {key}")
-                d = len(embeddings[0])  # Dimensionality of embeddings
-                base_index = faiss.IndexHNSWFlat(d, 32)
-                base_index.efSearch = 64
-                base_index.efConstruction = 80 # Construction "quality"
-                index = faiss.IndexIDMap(base_index)
-                # Create ids
-                self.indexes[key] = {"ref": index, "timestamp": time.time()}
+            return None
 
         index = self.indexes[key]["ref"]  # Get the Faiss index reference
 
