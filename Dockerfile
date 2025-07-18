@@ -37,6 +37,10 @@ RUN python3.9 -m pip install --upgrade pip
 RUN python3.9 -m pip install --no-cache-dir -r requirements.txt
 # Definir el directorio de trabajo
 WORKDIR /app
+COPY /init.sh /usr/local/bin/init.sh
+RUN chmod +x /usr/local/bin/init.sh
+COPY /python /app/
+
 
 # Exponer puertos de MongoDB y Flask
 EXPOSE 27017 5000
