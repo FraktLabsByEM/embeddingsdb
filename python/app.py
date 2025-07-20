@@ -368,6 +368,9 @@ def test(db, coll):
         - k: Number of results to return (default = 5)
     """
     try:
+        tmp = mongo.find_all(db, coll)
+        print(tmp)
+        return jsonify(tmp), 200
         # Validate request JSON
         request_data = request.get_json()
         if not request_data:
@@ -397,7 +400,7 @@ def test(db, coll):
         # Retrieve documents from MongoDB based on Faiss IDs
         for fid in faiss_ids:
             query = {"faiss_ids": {"$in": [fid]}}
-            tmp = mongo.find(db, coll, query)
+            tmp = mongo.find_all(db, coll)
             print(tmp)
             # if tmp["name"] in results: # If document exists in results, add new element
             #     results[tmp["name"]].append({
