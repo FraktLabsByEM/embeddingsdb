@@ -348,7 +348,7 @@ def drop(db, coll):
             return jsonify({"error": "Unauthorized"}), 403
 
         # Delete the collection from MongoDB
-        mongo.drop(db, coll)
+        mongo.drop_cl(db, coll)
 
         # Delete the Faiss index (removes from RAM and disk)
         if faiss.delete_index(db, coll):
