@@ -8,8 +8,8 @@ services:
       - "5000:5000"  # Exponer el puerto de Flask
     volumes:
       - ./data:/appdata  # Persistencia de datos de MongoDB
-      - ./python:/app  # Montar el código de la aplicación dentro del contenedor
-      - ./init.sh:/usr/local/bin/init.sh
+      # - ./python:/app  # Montar el código de la aplicación dentro del contenedor
+      # - ./init.sh:/usr/local/bin/init.sh
     environment:
       - PYTHONUNBUFFERED=1  # Evita problemas de buffering en logs
     # deploy:
