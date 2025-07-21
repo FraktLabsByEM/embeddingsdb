@@ -106,34 +106,38 @@ class FaissController:
     
     
     def add(self, db, collection, embeddings):
-        """Add new embeddings to a Faiss index and return assigned IDs."""
-        key = f"{db}/{collection}"
-        # Ensure the index is loaded in RAM
-        if key not in self.indexes:
+        try:
+            """Add new embeddings to a Faiss index and return assigned IDs."""
+            key = f"{db}/{collection}"
+            # Ensure the index is loaded in RAM
+            if key not in self.indexes:
+                return None
+
+            index = self.indexes[key]["ref"]  # Get the Faiss index reference
+
+            # Generate unique IDs for each embedding
+            # existing_ids = set(int(index.id_map.at(i)) for i in range(index.id_map.size())) if hasattr(index, "id_map") and index.id_map.size() > 0 else set()
+            # new_ids = np.arange(len(existing_ids), len(existing_ids) + len(embeddings))
+            new_start = 0
+            if hasattr(index, "id_map") and index.id_map.size() > 0:
+                existing_ids = set(int(index.id_map.at(i)) for i in range(index.id_map.size()))
+                new_start = max(existing_ids) + 1
+
+            new_ids = np.arange(new_start, new_start + len(embeddings), dtype='int64')
+
+            # Convert embeddings to NumPy array and add them to Faiss
+            embeddings = np.array(embeddings, dtype=np.float32)
+            index.add_with_ids(embeddings, new_ids)
+
+            # Update timestamp
+            self.indexes[key]["timestamp"] = time.time()
+
+            print(f"Added {len(embeddings)} embeddings to {key}")
+            self._export(db, collection)
+            return new_ids.tolist()  # Return assigned IDs
+        except Exception as err:
+            print(f"Error in faiss.add(): {err}")
             return None
-
-        index = self.indexes[key]["ref"]  # Get the Faiss index reference
-
-        # Generate unique IDs for each embedding
-        # existing_ids = set(int(index.id_map.at(i)) for i in range(index.id_map.size())) if hasattr(index, "id_map") and index.id_map.size() > 0 else set()
-        # new_ids = np.arange(len(existing_ids), len(existing_ids) + len(embeddings))
-        new_start = 0
-        if hasattr(index, "id_map") and index.id_map.size() > 0:
-            existing_ids = set(int(index.id_map.at(i)) for i in range(index.id_map.size()))
-            new_start = max(existing_ids) + 1
-
-        new_ids = np.arange(new_start, new_start + len(embeddings), dtype='int64')
-
-        # Convert embeddings to NumPy array and add them to Faiss
-        embeddings = np.array(embeddings, dtype=np.float32)
-        index.add_with_ids(embeddings, new_ids)
-
-        # Update timestamp
-        self.indexes[key]["timestamp"] = time.time()
-
-        print(f"Added {len(embeddings)} embeddings to {key}")
-        self._export(db, collection)
-        return new_ids.tolist()  # Return assigned IDs
 
 
     def search(self, db, collection, query_embedding, k=5):

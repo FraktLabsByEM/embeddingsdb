@@ -102,7 +102,7 @@ class UniversalEmbedder:
                     # Process whole file content
                     chunks = [text]
                     return {
-                        "bytes": [self.text_model.encode(chunk).tolist() if storable else self.text_model.encode(chunk) for chunk in chunks],
+                        "bytes": [self.embed_text(chunk, storable) for chunk in chunks],
                         "raw": chunks
                     }
                     
@@ -123,11 +123,12 @@ class UniversalEmbedder:
                         print("Applying OCR to scanned PDF")
                         images = convert_from_bytes(decoded_data, dpi=300)
                         for image in images:
-                            ocr_text = self.ocr_image(image)
+                            ocr_text = self.ocr_image(image).strip()
                             chunks.append(ocr_text)
+                    all_results = [self.embed_text(chunk, storable) for chunk in chunks]
                     return {
-                        "bytes": [self.text_model.encode(chunk).tolist() if storable else self.text_model.encode(chunk) for chunk in chunks],
-                        "raw": chunks
+                        "bytes": [item for sublist in all_results for item in sublist["bytes"]],
+                        "raw": [item for sublist in all_results for item in sublist["raw"]]
                     }
 
                 # Word (DOCX)
@@ -303,18 +304,22 @@ class UniversalEmbedder:
             }
 
     def embed_text(self, text, storable):
-        """Generate text embeddings"""
-        chunks = text.split("\n")
-        response = {
-            "bytes": [],
-            "raw": []
-        }
-        for chunk in chunks:
-            chunk = chunk.strip()  # remove spaces
-            if chunk:  # Validate non empty string
-                response["raw"].append(chunk)
-                response["bytes"].append(self.text_model.encode(chunk).tolist() if storable else self.text_model.encode(chunk))
-        return response
+        try:
+            """Generate text embeddings"""
+            chunks = text.split("\n")
+            response = {
+                "bytes": [],
+                "raw": []
+            }
+            for chunk in chunks:
+                chunk = chunk.strip()  # remove spaces
+                if chunk:  # Validate non empty string
+                    response["raw"].append(chunk)
+                    response["bytes"].append(self.text_model.encode(chunk).tolist() if storable else self.text_model.encode(chunk))
+            return response
+        except Exception as err:
+            print(f"Erron in embed_text(): {err}")
+            return None
 
     def embed_image(self, image_bytes):
         """Generate image embeddings using OpenL3."""
@@ -331,6 +336,14 @@ class UniversalEmbedder:
         return emb.flatten()
 
     def ocr_image(self, image_bytes):
-        """Apply OCR to provided image"""
-        img = Image.open(io.BytesIO(image_bytes))
-        return pytesseract.image_to_string(img)
+        try:
+            """Apply OCR to provided PIL Image object"""
+            if image_bytes.mode not in ['L', 'RGB']:
+                image_bytes = image_bytes.convert('RGB')
+                print(f"Imagen convertida a modo RGB para OCR.")
+            
+            extracted_text = pytesseract.image_to_string(image_bytes)
+            return extracted_text
+        except Exception as err:
+            print(err)
+            return ""
