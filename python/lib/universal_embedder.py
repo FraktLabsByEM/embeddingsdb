@@ -1,7 +1,6 @@
 import base64
 import io
 import os
-import re
 import tempfile
 import soundfile as sf
 import torch
@@ -21,10 +20,7 @@ from sentence_transformers import SentenceTransformer
 from transformers import logging
 import pandas as pd
 
-
 logging.set_verbosity_error()  # Reduce unneeded logs
-device = "cuda" if torch.cuda.is_available() else "cpu"
-
 
 plain_text_types = [
         "text/plain",                      # TXT
@@ -60,8 +56,26 @@ image_types = [
 
 class UniversalEmbedder:
     def __init__(self):
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(f"Attempting to load embedding models into {self.device}")
         # Load models
-        self.text_model = SentenceTransformer("all-MiniLM-L6-v2", device=device)  # Text Model
+        # Text model
+        self.text_model = SentenceTransformer("all-MiniLM-L6-v2", device=self.device)
+        # Audio model (size 512 instead of 8192)
+        self.audio_model = openl3.models.load_audio_embedding_model(
+                input_repr="mel256",
+                content_type="env",
+                embedding_size=512,
+                frontend='librosa'
+            )
+        self.audio_model = self.audio_model.to(self.device)
+        # Image model
+        self.image_model = openl3.models.load_audio_embedding_model(
+                input_repr="image",
+                content_type="objects",
+                embedding_size=512
+            )
+        self.image_model = self.image_model.to(self.device)
         self.audio_sample_rate = 48000  # OpenL3 uses 48 kHz
         self.tesseract_path = "/usr/bin/tesseract"  # Path to tesseract
         self.tr_model = whisper.load_model("small")
@@ -119,7 +133,7 @@ class UniversalEmbedder:
                                 chunks.append(page_text)
                     
                     # Convert PDF pages to images for OCR
-                    if not chunks:
+                    if len(chunks) == 0:
                         print("Applying OCR to scanned PDF")
                         images = convert_from_bytes(decoded_data, dpi=300)
                         for image in images:
@@ -179,12 +193,11 @@ class UniversalEmbedder:
                     print("Image file (JPG, PNG, GIF, BMP, TIFF)")
                     
                     with io.BytesIO(decoded_data) as image_buffer:
-                        image = Image.open(image_buffer).convert("RGB")  # Load the image and convert to RGB
-                        image_array = np.array(image) / 255.0  # Normalize pixel values
-                        image_embedding = openl3.get_image_embedding(image_array, content_type="env").flatten()  # Generate image embedding
-                    
-                    # Extract text using OCR
-                    ocr_text = self.ocr_image(decoded_data).strip()
+                        image_embedding = self.embed_image(image_buffer)
+                        if image_embedding is None:
+                            return None
+                        # Extract text using OCR
+                        ocr_text = self.ocr_image(image_buffer).strip()
                     
                     chunks = []
                     embeddings = []
@@ -304,33 +317,53 @@ class UniversalEmbedder:
 
     def embed_text(self, text, storable):
         """Generate text embeddings"""
-        chunks = text.split("\n")
-        response = {
-            "bytes": [],
-            "raw": []
-        }
-        for chunk in chunks:
-            chunk = chunk.strip()  # remove spaces
-            if chunk:  # Validate non empty string
-                response["raw"].append(chunk)
-                response["bytes"].append(self.text_model.encode(chunk).tolist() if storable else self.text_model.encode(chunk))
-        return response
+        try:
+            chunks = text.split("\n")
+            response = {
+                "bytes": [],
+                "raw": []
+            }
+            for chunk in chunks:
+                chunk = chunk.strip()  # remove spaces
+                if chunk:  # Validate non empty string
+                    response["raw"].append(chunk)
+                    response["bytes"].append(self.text_model.encode(chunk).tolist() if storable else self.text_model.encode(chunk))
+            return response
+        except Exception as err:
+            print(f"Failed to generate text embeddings due to: {err}")
+            return None
 
     def embed_image(self, image_bytes):
         """Generate image embeddings using OpenL3."""
-        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        image = np.array(image) / 255.0  # Normalise
-        emb = openl3.get_image_embedding(image, content_type="env")  # `env` = environment embeddings
-        return emb.flatten()
+        try:
+            # Process image
+            image = Image.open(image_bytes).convert("RGB")
+            image = image.resize((224, 224))
+            image = np.array(image).astype(np.float32) / 255.0  # Normalise
+            img_batch = np.expand_dims(image, axis=0)
+            # Request embeddings
+            with torch.no_grad():
+                emb = self.image_model(torch.from_numpy(img_batch).permute(0,3,1,2).to(self.device))
+            # Retrieve embeddings
+            emb_result = emb.cpu().numpy()
+            return emb_result.flatten()
+        except Exception as err:
+            print(f"Failed to generate image embeddings due to: {err}")
+            return None
 
-    def embed_audio(self, audio_bytes):
+    def embed_audio(self, audio_bytes, sr):
         """Generate audio embeddings using OpenL3."""
-        audio_buffer = io.BytesIO(audio_bytes)
-        audio, sr = librosa.load(audio_buffer, sr=self.audio_sample_rate)
-        emb = openl3.get_audio_embedding(audio, sr, content_type="env")
-        return emb.flatten()
+        try:
+            with torch.no_grad():
+                emb = openl3.get_audio_embedding(audio_bytes, sr, model=self.audio_model, content_type="env")
+                return emb.flatten()
+            
+        except Exception as err:
+            print(f"Failed to generate audio embeddings due to: {err}")
+            return None
+            
 
     def ocr_image(self, image_bytes):
         """Apply OCR to provided image"""
-        img = Image.open(io.BytesIO(image_bytes))
+        img = Image.open(image_bytes)
         return pytesseract.image_to_string(img)
