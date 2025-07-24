@@ -5,8 +5,8 @@ import decord
 import tempfile
 import soundfile as sf
 import torch
-import openl3
-import whisper
+# import openl3
+# import whisper
 import librosa
 import pytesseract
 import numpy as np
@@ -17,8 +17,10 @@ from PyPDF2 import PdfReader
 from pptx import Presentation
 from transformers import logging
 from pdf2image import convert_from_bytes
-from sentence_transformers import SentenceTransformer
+# from sentence_transformers import SentenceTransformer
 from moviepy.video.io.VideoFileClip import VideoFileClip
+
+from audioclip import AudioClip
 
 logging.set_verbosity_error()  # Reduce unneeded logs
 
