@@ -49,6 +49,7 @@ def add(db, coll, input, name):
 emb_lens = {
     "text": 384,
     "image": 512,
+    "audio": 512
 }
 
 @app.route("/v1/embeddings/<string:db>/<string:coll>/create", methods=["POST"])
