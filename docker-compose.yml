@@ -1,21 +1,22 @@
 services:
-  app:
+  fss:
     container_name: fss
     build:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "5000:5000"  # Exponer el puerto de Flask
+      - "5000:5000"  # Flask port
+      - "5001:27017"  # Mongo port
     volumes:
-      - ./data:/appdata  # Persistencia de datos de MongoDB
-      # - ./python:/app  # Montar el código de la aplicación dentro del contenedor
+      - ./data:/appdata  # Data persistence mongo + faiss
+      # - ./python:/app
       # - ./init.sh:/usr/local/bin/init.sh
     environment:
       - PYTHONUNBUFFERED=1  # Evita problemas de buffering en logs
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

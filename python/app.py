@@ -1,9 +1,16 @@
-import json
-from flask import Flask, request, jsonify
+import os
+import sys
+
+# Append Audioclip
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "AudioCLIP")))
+
+import time
+from bson import ObjectId
 from flask_cors import CORS
+from flask import Flask, request, jsonify
 from lib.mongo_controller import MongoController
-from lib.universal_embedder import UniversalEmbedder
 from lib.faiss_controller import FaissController
+from lib.universal_embedder import UniversalEmbedder
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -11,106 +18,64 @@ CORS(app)
 
 # Initialize controllers
 mongo = MongoController()
-embedder = UniversalEmbedder()
 faiss = FaissController()
+embedder = UniversalEmbedder()
+
+def server_fail(error):
+    print(f"Server error -> {error}")
+    return jsonify({ "status": "fail", "error": f"Server error -> {error}" }), 501
+
+def user_error(error):
+    return jsonify({ "status": "fail", "error": error }), 401
+
+def success(json):
+    json["status"] = "ok"
+    return jsonify(json), 200
 
 def add(db, coll, input, name):
     try:
         # Generate embeddings
         embedding_result = embedder.embed({ "input": input }, storable=True)
-        bytes_embeddings = embedding_result.get("bytes", [])
-        raw_data = embedding_result.get("raw", [])
-        print(len(bytes_embeddings))
-
-        if not bytes_embeddings or not raw_data:
-            return jsonify({"error": "Failed to generate embeddings"}), 500
+        bytes_embeddings = embedding_result.get("bytes")
+        raw_data = embedding_result.get("raw")
 
         # Insert embeddings into Faiss
         faiss_ids = faiss.add(db, coll, bytes_embeddings)
-        print(f"Faiss ids: {faiss_ids}")
-        if faiss_ids is None:
-            return jsonify({"error": "Failed to insert embeddings into Faiss"}), 500
 
         # Prepare document for MongoDB
         document = {
             "name": name,
+            "source": input,
             "raw": raw_data,
-            "faiss_ids": faiss_ids
+            "faiss_ids": faiss_ids,
+            "timestamp": time.time()
         }
 
         # Insert into MongoDB
         mongo.insert(db, coll, document)
-        print("Inserted in mongo")
-        return faiss_ids, False
+        return faiss_ids
     except Exception as err:
-        print(f"Error in add(): {err}")
-        return False, err
-
-emb_lens = {
-    "text": 384,
-    "image": 512,
-}
-
-@app.route("/v1/embeddings/<string:db>/<string:coll>/create", methods=["POST"])
-def create_index(db, coll):
-    global emb_lens
-    """
-    Crea un nuevo índice Faiss vacío.
-    
-    Expected JSON body:
-        - neightboors (int): Número de vecinos para el índice HNSW
-        - length (int): Dimensión de los vectores a almacenar
-    """
-    try:
-        request_data = request.get_json()
-        if not request_data:
-            return jsonify({"error": "Invalid request format"}), 400
-        
-        neightboors = request_data.get("neightboors")
-        ln = request_data.get("length")
-
-        if neightboors is None or ln is None:
-            return jsonify({"error": "Missing required fields: 'neightboors' and/or 'length'"}), 400
-
-        result = faiss.create(db, coll, neightboors, ln)
-
-        if result is True:
-            return jsonify({"message": f"Index {db}/{coll} created successfully"}), 200
-        elif isinstance(result, dict) and "error" in result:
-            return jsonify(result), 400
-        else:
-            return jsonify({"error": "Unknown error occurred during index creation"}), 500
-
-    except Exception as e:
-        print(f"Error in create_index(): {e}")
-        return jsonify({"error": str(e)}), 500
-
+        print(f"flask - add error: {err}")
+        return None
 
 # ----- ENDPOINTS -----
 @app.route("/v1/embeddings", methods=["POST"])
 def generate():
     """
+    Generate embeddings from text, image, audio or file
+    
     Expected request JSON body:
         - input (str): "plain text or base64"
     """
     try:
-        # Validate request JSON
         request_data = request.get_json()
-        if not request_data:
-            return jsonify({"error": "Invalid request format"}), 400
-
-        # Retrieve data
-        data = request_data.get("input")
-        
-        if not data:
-            return jsonify({"error": "'input' param must be provided"}), 400
-        # Create embeddings
-        print("generating embeddings")
+        # Validations
+        if not request_data or not "input" in request_data:
+            return user_error(f"Missing required field: 'input'")
+        # Generate embeddings
         embedding_result = embedder.embed(request_data, storable=True)
-        print(f"generated embeddings {embedding_result}")
-        print("building response")
-        
-        return jsonify({
+        # Build result
+        result = {
                 "data": [
                     {
                         "object": "embedding",
@@ -120,231 +85,311 @@ def generate():
                     for index, emb in enumerate(embedding_result["bytes"])
                 ],
                 "object": "list",
-                "model": "universal-embedder",
-                
-            }), 200
-    except Exception as e:
-        print(f"Error in generate(): {e}")
-        return jsonify({"error": str(e)}), 500
+                "model": "snlr-universal-embedder"
+            }
+        return success(result)
+    except Exception as err:
+        print(f"Error in generate(): {err}")
+        return server_fail(err)
+    
+
+@app.route("/v1/embeddings/<string:db>/<string:coll>/create", methods=["POST"])
+def create_index(db, coll):
+    """
+    Create an empty faiss-mongo peer index
+    
+    Expected JSON body:
+        - cluster_size (int): Cluster size
+    """
+    try:
+        request_data = request.get_json()
+        # Validations
+        if not request_data:
+            user_error("Invalid request format")
+        if not 'cluster_size' in request_data:
+            user_error("Missing required field: 'cluster_size'")
+        # Process
+        cluster_size = request_data.get("cluster_size")
+        result = faiss.create(db, coll, cluster_size)
+        if result is True:
+            return success({ "message": f"Index {db}/{coll} created successfully"})
+        server_fail(f"Unknown error while creating index.")
+    except Exception as err:
+        print(f"Error in create_index(): {err}")
+        return server_fail(err)
+    
+
+@app.route("/v1/embeddings/<string:db>/<string:coll>/view", methods=["POST"])
+def view(db, coll):
+    """
+    View collection entries
+    """
+    try:
+        response = mongo.find_all(db, coll)
+        return success(response)
+    except Exception as err:
+        print(f"Error in view(): {err}")
+        return server_fail(err)
     
 
 @app.route("/v1/embeddings/<string:db>/<string:coll>/save", methods=["POST"])
 def save(db, coll):
     """ 
+    Save entry from text, image, audio or file
+    
     Expected request JSON body:
-        - input (str): "plain text or base64"
-        - file_name (str): "file name"
+        - file_name (str): File name
+        - input (str): plain text or base64
     """
     try:
         # Validate request JSON
         request_data = request.get_json()
         if not request_data:
-            return jsonify({"error": "Invalid request format"}), 400
-
+            return user_error("Invalid request format")
+        if not "input" in request_data:
+            return user_error("Missing required field: 'input'.")
+        if not "file_name" in request_data:
+            return user_error("Missing required field: 'file_name'.")
+            
         data = request_data.get("input")
         name = request_data.get("file_name")
+        faiss_ids = add(db, coll, data, name)
 
-        if not name:
-            return jsonify({"error": "Missing required field: file_name"}), 400
+        if faiss_ids is None:
+            return server_fail("Unknown error while trying to save embeddings")
+        
+        return success({ "message": "Data saved successfully", "ids": faiss_ids, "file_name": name })
 
-        if not data:
-            return jsonify({"error": "'input' param must be provided"}), 400
-
-        faiss_ids, err = add(db, coll, data, name)
-
-        if not err:
-            return jsonify({"message": "Data saved successfully", "faiss_ids": faiss_ids}), 200
-        else:
-            return jsonify({"error": str(err)}), 500
-
-    except Exception as e:
-        print(f"Error in save(): {e}")
-        return jsonify({"error": str(e)}), 500
-
+    except Exception as err:
+        print(f"Error in save(): {err}")
+        return server_fail(str(err))
 
 
 @app.route("/v1/embeddings/<string:db>/<string:coll>/search", methods=["POST"])
 def search(db, coll):
     """ 
+    Reverse semantic search
+    
     Expected request JSON body:
-        - input (str): "plain text or base64"
-        - k: Number of results to return (default = 5)
+        - input (str): plain text or base64
+        - results: Number of results to return (default = 5)
     """
     try:
-        # Validate request JSON
         request_data = request.get_json()
+        # Validate request JSON
         if not request_data:
-            return jsonify({"error": "Invalid request format"}), 400
-
-        data = request_data.get("input")
-        k = request_data.get("k", 5)
-
-        if not data:
-            return jsonify({"error": "'input' param must be provided"}), 400
+            return user_error("Invalid request format")
+        if not "input" in request_data:
+            return user_error("Missing required field: 'input'")
+        
+        k = request_data.get("results", 5)
 
         # Generate embedding for the search query
         embedding_result = embedder.embed(request_data, storable=True)
         query_embedding = embedding_result.get("bytes", [])
 
         if not query_embedding:
-            return jsonify({"error": "Failed to generate embedding for query"}), 500
+            return server_fail("Failed to generate embeddings.")
 
         # Search in Faiss
-        search_results = faiss.search(db, coll, query_embedding[0], k)  # Query with first embedding
-        if not search_results:
-            return jsonify({"message": "No matches found"}), 200
+        search_results = {}
+        for emb in query_embedding:
+            res = faiss.search(db, coll, emb, k)
+            if res.keys() > 0:
+                for key in res.keys():
+                    search_results[key] = res[key]
+                    
+        # Filter k results
+        top_k = dict(sorted(search_results.items(), key=lambda item: item[1])[:k])
+        faiss_ids = list(top_k.keys())
+        faiss_scores = list(top_k.values())
 
-        faiss_ids = list(search_results.keys())
-        faiss_scores = list(search_results.values())
-        results = {}
         # Retrieve documents from MongoDB based on Faiss IDs
+        results = {}
         for fid in faiss_ids:
             query = {"faiss_ids": {"$in": [fid]}}
             tmp = mongo.find(db, coll, query)
-            if tmp["name"] in results: # If document exists in results, add new element
-                results[tmp["name"]].append({
-                    "content": tmp["raw"][tmp["faiss_ids"].index(fid)],
-                    "score": faiss_scores[faiss_ids.index(fid)]
-                })
-            else: # create result for document
-                results[tmp["name"]] = [
-                    {
+            if tmp is not None:
+                if tmp["name"] in results: # If document exists in results, add new element
+                    results[tmp["name"]].append({
                         "content": tmp["raw"][tmp["faiss_ids"].index(fid)],
                         "score": faiss_scores[faiss_ids.index(fid)]
-                    }
-                ]
+                    })
+                else: # create result for document
+                    results[tmp["name"]] = [
+                        {
+                            "content": tmp["raw"][tmp["faiss_ids"].index(fid)],
+                            "score": faiss_scores[faiss_ids.index(fid)]
+                        }
+                    ]
         
-        return jsonify({"matches": results}), 200
+        return success({"matches": results})
 
-    except Exception as e:
-        print(f"Error in search(): {e}")
-        return jsonify({"error": str(e)}), 500
+    except Exception as err:
+        print(f"Error in search(): {err}")
+        return server_fail(err)
 
 
 
 @app.route("/v1/embeddings/<string:db>/<string:coll>/delete", methods=["POST"])
 def delete(db, coll):
     """ 
+    Delete entry
+    
     Expected request JSON body:
-        - file_name: File name
+        - id: Entry id
     """
     try:
-        # Validate request JSON
         request_data = request.get_json()
-        if not request_data or "file_name" not in request_data:
-            return jsonify({"error": "Missing required field: file_name"}), 400
+        # Validate request JSON
+        if not request_data or "id" not in request_data:
+            return user_error("Missing required field: 'id'")
 
-        filename = request_data["file_name"]
-        query = { "name": filename }
+        id = request_data["id"]
+        
+        # Confirm the entry exists
+        _doc = mongo.find(db, coll, { "_id": ObjectId(id) })
+        if _doc is None:
+            return user_error({ "message": f"Entry with id '{id}' not found in '{db}/{coll}'." })
         
         # Fetch all documents
         full_docs = mongo.find_all(db, coll)
         
-        deleted_embeddings = 0
         # Drop faiss index
-        emb_deleted =  faiss.delete_index(db, coll)
+        cluster_size = faiss.get_clustersize(db, coll)
+        faiss.delete_index(db, coll)
+        # Create a new one
+        faiss.create(db, coll, cluster_size)
         
-        updated_ok = True
+        total = 0
+        succesfully = 0
+        deleted_embeddings = 0
         # Remove deleted document
         for doc in full_docs:
-            if 'name' in doc and doc['name'] != filename:
-                # Loop thru all raw chunks
-                new_emb = []
-                for ind, rw in enumerate(doc["raw"]):
-                    # Generate embedings
-                    emb = embedder.embed({"input": rw }, storable=True)
-                    # Add embeddings
-                    new_emb.append(emb["bytes"][0])
-                # Update faiss id
-                new_ids = faiss.add(db, coll, new_emb)
-                # Update in mongo
-                updated_ok = mongo.update(db, coll, { "name": doc["name"] }, { "faiss_ids": new_ids })
-                if not updated_ok:
-                    break
-            elif 'name' in doc:
-                deleted_embeddings = len(doc["faiss_ids"])
+            # Document query
+            q = { "_id": ObjectId(doc["_id"]) }
+            # Ignored entries
+            if doc['id'] != id:
+                total += 1 # Increase total count
+                # Generate new embeddings
+                tmp_res = embedder.embed({ "input": doc["source"]}, True)
+                # Get embeddings result
+                tmp_raw = tmp_res.get("raw")
+                tmp_emb = tmp_res.get("bytes")
+                # Insert into faiss index
+                tmp_ids = faiss.add(db, coll, tmp_emb)
+                # update on mongo
+                updated = mongo.update(db, coll, q, {
+                        "raw": tmp_raw,
+                        "faiss_ids": tmp_ids
+                    })
+                # Confirm update
+                if updated: succesfully += 1
+            # Deleted entries
+            else:
+                deleted_embeddings += len(doc["faiss_ids"])
+                # Remove from mongo
+                mongo.delete(db, coll, q)
         
-        # Remove document
-        deleted = mongo.delete(db, coll, query)
-        # Update mongo documents
-        
-        if emb_deleted and updated_ok and deleted:
-            return jsonify({"message": f"Deleted 1 document and {deleted_embeddings} embeddings"}), 200
+        if total == succesfully:
+            return success({ "message": f"Deleted 1 entry with {deleted_embeddings} embeddings."})
         else:
-            return jsonify({"message": f"Something went wrong!", "index_deleted": emb_deleted, "updated": updated_ok, "mongo_del": deleted }), 200
+            return success({ 
+                    "message": f"Entry deleted succesfully! But something went wrong indexing other entries. {succesfully}/{total} reindexed.",
+                    "location": f"{db}/{coll}",
+                    "previous_data": full_docs
+                })
 
-    except Exception as e:
-        print(f"Error in delete(): {e}")
-        return jsonify({"error": str(e)}), 500
-
-
+    except Exception as err:
+        print(f"Error in delete(): {err}")
+        return server_fail(err)
 
 @app.route("/v1/embeddings/<string:db>/<string:coll>/update", methods=["POST"])
 def update(db, coll):
     """ 
+    Update entry data
+    
     Expected request JSON body:
-        - input (str): "plain text or base64"
-        - file_name (str): File asociated name
+        - id (str): Entry id
+        - file_name (str): File name
+        - input (str): plain text or base64
     """
     try:
         # Validate request JSON
         request_data = request.get_json()
-        if not request_data or "file_name" not in request_data or "input" not in request_data:
-            return jsonify({"error": "Missing required field: file_name"}), 400
-
-        file_name = request_data["file_name"]
-        query = { "name": file_name }
+        
+        # Validate params
+        required_fields = {"id", "file_name", "input"}
+        if not request_data or not required_fields.issubset(request_data):
+            return user_error(f"Missing some of the required fields: id, file_name, input")
+        
+        id = request_data.get("id")
+        file_name = request_data.get("file_name")
         new_data = request_data.get("input")
-
+        
+        # Confirm the entry exists
+        _doc = mongo.find(db, coll, { "_id": ObjectId(id) })
+        if _doc is None:
+            return user_error({ "message": f"Entry with id '{id}' not found in '{db}/{coll}'." })
+        
         # Fetch all documents
         full_docs = mongo.find_all(db, coll)
         
-        deleted_embeddings = 0
         # Drop faiss index
-        emb_deleted =  faiss.delete_index(db, coll)
+        cluster_size = faiss.get_clustersize(db, coll)
+        faiss.delete_index(db, coll)
+        # Create a new one
+        faiss.create(db, coll, cluster_size)
         
-        updated_ok = True
+        total = 0
+        succesfully = 0
+        updated_embeddings = 0
         # Remove deleted document
         for doc in full_docs:
-            if 'name' in doc and doc['name'] != file_name:
-                # Loop thru all raw chunks
-                new_emb = []
-                for ind, rw in enumerate(doc["raw"]):
-                    # Generate embedings
-                    emb = embedder.embed({"input": rw }, storable=True)
-                    # Add embeddings
-                    new_emb.append(emb["bytes"][0])
-                # Update faiss id
-                new_ids = faiss.add(db, coll, new_emb)
-                # Update in mongo
-                updated_ok = mongo.update(db, coll, { "name": doc["name"] }, { "faiss_ids": new_ids })
-                if not updated_ok:
-                    break
-            elif 'name' in doc:
-                deleted_embeddings = len(doc["faiss_ids"])
+            total += 1 # Increase total count
+            # Document query
+            q = { "_id": ObjectId(doc["_id"]) }
+            # Generate new embeddings
+            tmp_res = embedder.embed({ "input": doc["source"] if doc['id'] != id else new_data }, True)
+            # Get embeddings result
+            tmp_raw = tmp_res.get("raw")
+            tmp_emb = tmp_res.get("bytes")
+            # Insert into faiss index
+            tmp_ids = faiss.add(db, coll, tmp_emb)
+            # update on mongo
+            updated = mongo.update(db, coll, q, {
+                    "file_name": doc["file_name"] if doc["id"] != id else file_name,
+                    "raw": tmp_raw,
+                    "faiss_ids": tmp_ids
+                })
+            # Confirm update
+            if updated: succesfully += 1
+            # Save new updated embeddings len
+            if doc["id"] == id:
+                updated_embeddings = len(tmp_emb)
         
-        # Remove document
-        deleted = mongo.delete(db, coll, query)
-        # Add new document
-        add(db, coll, {"input": new_data}, file_name)
-        
-        if emb_deleted and updated_ok and deleted:
-            return jsonify({"message": f"Updated 1 document and {deleted_embeddings} embeddings"}), 200
+        if total == succesfully:
+            return success({ "message": f"Updated 1 entry with {updated_embeddings} embeddings."})
         else:
-            return jsonify({"message": f"Something went wrong!", "index_deleted": emb_deleted, "updated": updated_ok, "mongo_del": deleted }), 200
-
-    except Exception as e:
-        print(f"Error in update(): {e}")
-        return jsonify({"error": str(e)}), 500
+            return success({ 
+                    "message": f"Entry updated succesfully! But something went wrong indexing other entries. {succesfully}/{total} reindexed.",
+                    "location": f"{db}/{coll}",
+                    "previous_data": full_docs
+                })
+        
+    except Exception as err:
+        print(f"Error in update(): {err}")
+        return server_fail(err)
 
 
 
 @app.route("/v1/embeddings/<string:db>/<string:coll>/drop", methods=["POST"])
 def drop(db, coll):
     """ 
+    Drop entry collection
+    
     Expected request JSON body:
         - pass: "Sanolivar2024*" (required)
-        ++
     """
     try:
         # Validate request JSON
@@ -354,81 +399,20 @@ def drop(db, coll):
 
         # Validate password
         if request_data["pass"] != "Sanolivar2024*":
-            return jsonify({"error": "Unauthorized"}), 403
+            return user_error("Unauthorized")
 
         # Delete the collection from MongoDB
         mongo.drop_cl(db, coll)
 
         # Delete the Faiss index (removes from RAM and disk)
         if faiss.delete_index(db, coll):
-            return jsonify({"message": f"Collection {db}/{coll} has been fully deleted"}), 200
+            return success({"message": f"Collection '{db}/{coll}' has been deleted"})
         else:
-            return jsonify({"message": f"MongoDB collection deleted, but Faiss index not found"}), 200
+            return success({"message": f"Index '{db}/{coll}' not found."})
 
-    except Exception as e:
-        print(f"Error in drop(): {e}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/v1/embeddings/<string:db>/<string:coll>/mongotest", methods=["POST"])
-def test(db, coll):
-    """ 
-    Expected request JSON body:
-        - input (str): "plain text or base64"
-        - k: Number of results to return (default = 5)
-    """
-    try:
-        tmp = mongo.find_all(db, coll)
-        print(tmp)
-        return jsonify(tmp), 200
-        # Validate request JSON
-        request_data = request.get_json()
-        if not request_data:
-            return jsonify({"error": "Invalid request format"}), 400
-
-        data = request_data.get("input")
-        k = request_data.get("k", 5)
-
-        if not data:
-            return jsonify({"error": "'input' param must be provided"}), 400
-
-        # Generate embedding for the search query
-        embedding_result = embedder.embed(request_data, storable=True)
-        query_embedding = embedding_result.get("bytes", [])
-
-        if not query_embedding:
-            return jsonify({"error": "Failed to generate embedding for query"}), 500
-
-        # Search in Faiss
-        search_results = faiss.search(db, coll, query_embedding[0], k)  # Query with first embedding
-        if not search_results:
-            return jsonify({"message": "No matches found"}), 200
-
-        faiss_ids = list(search_results.keys())
-        faiss_scores = list(search_results.values())
-        results = {}
-        # Retrieve documents from MongoDB based on Faiss IDs
-        for fid in faiss_ids:
-            query = {"faiss_ids": {"$in": [fid]}}
-            tmp = mongo.find_all(db, coll)
-            print(tmp)
-            # if tmp["name"] in results: # If document exists in results, add new element
-            #     results[tmp["name"]].append({
-            #         "content": tmp["raw"][tmp["faiss_ids"].index(fid)],
-            #         "score": faiss_scores[faiss_ids.index(fid)]
-            #     })
-            # else: # create result for document
-            #     results[tmp["name"]] = [
-            #         {
-            #             "content": tmp["raw"][tmp["faiss_ids"].index(fid)],
-            #             "score": faiss_scores[faiss_ids.index(fid)]
-            #         }
-            #     ]
-        
-        return jsonify({"matches": results}), 200
-
-    except Exception as e:
-        print(f"Error in search(): {e}")
-        return jsonify({"error": str(e)}), 500
+    except Exception as err:
+        print(f"Error in drop(): {err}")
+        return server_fail(err)
 
 # ----- START SERVER -----
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
-# --extra-index-url https://download.pytorch.org/whl/torch_stable.html
-
 --extra-index-url https://download.pytorch.org/whl/cu121
+
+# PyTorch
 torch==2.5.1+cu121
 torchvision==0.20.1+cu121
 torchaudio==2.5.1+cu121
@@ -9,45 +9,38 @@ torchaudio==2.5.1+cu121
 Flask==3.1.0
 flask-cors==5.0.0
 
-# FAISS con soporte para GPU (CUDA)
-# PyTorch con soporte para CUDA (Cambia la versión según tu GPU y CUDA)
+# FAISS
 tf-keras==2.19.0
 faiss-cpu==1.11.0
 numpy<2
 scipy==1.13.1
-decord==0.6.0
 
-# Modelos de embeddings de texto
-transformers==4.51.3
-sentence-transformers==4.1.0
-
-# Modelos de embeddings para imágenes y audio
+# Audio, imagen and video
 Pillow==10.4.0
-openl3==0.4.2
-
-# Modelos de embeddings para audio
 librosa==0.10.0
 openai-whisper==20240930
-
-# Videos
-# moviepy
-# decord
+decord==0.6.0
+moviepy==2.2.1
 
 # MongoDB
 pymongo<4.0
 
-# PDF Dependencies
+# Documents: PDF, Word, Excel, PowerPoint
 PyPDF2==3.0.1
 pdf2image==1.17.0
 pytesseract==0.3.13
-
-# XLS
 pandas==2.2.3
 openpyxl==3.1.5
 xlrd==2.0.1
-
-# DOC
 python-docx==1.1.2
-
-# PPT
 python-pptx==1.0.2
+
+# ImageBind Dependencies
+transformers==4.41.2
+pytorch-lightning==2.2.5
+opencv-python==4.10.0.82 
+tqdm==4.66.4
+scikit-learn==1.5.0
+ftfy==6.1.1
+regex==2023.12.25
+termcolor==2.4.0

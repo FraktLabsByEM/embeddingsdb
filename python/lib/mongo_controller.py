@@ -1,8 +1,6 @@
 from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError, PyMongoError
 
-from flask import jsonify
-
 class MongoController:
     def __init__(self, host='localhost', port=27017):
         """
@@ -20,10 +18,8 @@ class MongoController:
         try:
             self.client.drop_database(self.client[db])
             return True
-            # return jsonify({ "status": "ok", "code": 200, "message": f"Database '{db}' succesfully droped."})
-        except PyMongoError as e:
-            return False
-            # return jsonify({ "status": "fail", "code": 300, "message": f"Failed to retrieve documents from collection '{db}.{collection_name}' error: {e}" })
+        except PyMongoError as err:
+            raise ValueError(f"drop_db - Error while droping db '{db}': {err}")
 
     def create_cl(self, db, collection_name):
         """
@@ -36,10 +32,8 @@ class MongoController:
         try:
             self.client[db].create_collection(collection_name)
             return True
-            # return jsonify({ "status": "ok", "code": 200, "message": f"Collection '{db}.{collection_name}' succesfully created." })
-        except PyMongoError as e:
-            return False
-            # return jsonify({ "status": "fail", "code": 300, "message": f"Failed to create collection '{db}.{collection_name}' error: {e}" })
+        except PyMongoError as err:
+            raise ValueError(f"create_cl - Error while creating collection '{collection_name}' into '{db}': {err}")
 
     def drop_cl(self, db, collection_name):
         """
@@ -50,10 +44,8 @@ class MongoController:
         try:
             self.client[db].drop_collection(collection_name)
             return True
-            # return jsonify({ "status": "ok", "code": 200, "message": f"Collection '{db}.{collection_name}' succesfully dropped." })
-        except PyMongoError as e:
-            return False
-            # return jsonify({ "status": "fail", "code": 300, "message": f"Failed to drop collection '{db}.{collection_name}' error: {e}" })
+        except PyMongoError as err:
+            raise ValueError(f"drop_cl - Error while droping collection '{collection_name}' from '{db}': {err}")
 
     def find_all(self, db, collection_name):
         """
@@ -62,19 +54,15 @@ class MongoController:
         :param collection_name: Collection name
         :return: Results list
         """
-        collection = self.client[db][collection_name]
         try:
+            collection = self.client[db][collection_name]
             documents = list(collection.find())
-            if documents:
-                for doc in documents:
-                    doc["_id"] = str(doc["_id"])
-                return documents
-            else:
-                return None
-                # return jsonify({ "status": "fail", "code": 200, "message": f"Nothing found in '{db}.{collection_name}'." })
-        except PyMongoError as e:
-            return None
-            # return jsonify({ "status": "fail", "code": 300, "message": f"Failed to retrieve documents from collection '{db}.{collection_name}' error: {e}" })
+            for doc in documents:
+                doc["id"] = str(doc["_id"])
+                del doc["_id"]
+            return documents
+        except PyMongoError as err:
+            raise ValueError(f"find_all - Error while trying to find documents on '{db}/{collection_name}': {err}")
 
     def find(self, db, collection_name, query):
         """
@@ -84,17 +72,17 @@ class MongoController:
         :param query: Search filter
         :return: First document found matching the query
         """
-        collection = self.client[db][collection_name]
         try:
+            collection = self.client[db][collection_name]
             document = collection.find_one(query)
-            if document:
-                return document
-            else:
+            if not document:
+                print(f"find - No results on '{db}'/'{collection_name}'")
                 return None
-                # return jsonify({ "status": "ok", "code": 300, "message": f"Document not found in '{db}.{collection_name}'"})
-        except PyMongoError as e:
-            return None
-            # return jsonify({ "status": "fail", "code": 300, "message": f"Failed to find a document from collection '{db}.{collection_name}' error: {e}" })
+            document["id"] = str(document["_id"])
+            del document["_id"]
+            return document
+        except PyMongoError as err:
+            raise ValueError(f"find - Error while trying to find a document on '{db}/{collection_name}': {err}")
 
     def insert(self, db, collection_name, document):
         """
@@ -104,17 +92,15 @@ class MongoController:
         :param document: Documento to insert
         :return: Document id
         """
-        collection = self.client[db][collection_name]
         try:
+            collection = self.client[db][collection_name]
             result = collection.insert_one(document)
-            return { "status": True, "id": str(result.inserted_id) }
-            # return jsonify({ "status": "ok", "code": 200, "message": f"Document succesfully inserted into '{db}.{collection_name}'.", "doc_id": str(result.inserted_id) })
-        except DuplicateKeyError as e:
-            return { "status": False, "error": e }
-            # return jsonify({ "status": "fail", "code": 300, "message": f"Failed to isert into collection '{db}.{collection_name}' error: {e}" })
-        except PyMongoError as e:
-            return { "status": False, "error": e }
-            # return jsonify({ "status": "fail", "code": 300, "message": f"Failed to insert into collection '{db}.{collection_name}' error: {e}" })
+            return result.inserted_id
+        except DuplicateKeyError as derr:
+            print(derr)
+            raise ValueError(f"insert - Entry already exists")
+        except PyMongoError as err:
+            raise ValueError(f"insert - Error while trying to insert a document on '{db}/{collection_name}': {err}")
             
     def update(self, db, collection_name, query, new_values):
         """
@@ -125,14 +111,16 @@ class MongoController:
         :param new_values: New values
         :return: Number of documents changed
         """
-        collection = self.client[db][collection_name]
         try:
-            collection.update_one(query, {'$set': new_values})
-            return True
-            # return jsonify({ "status": "ok", "code": 200, "message": f"{result.modified_count } Document(s) succesfully updated in '{db}.{collection_name}'.", "count": result.modified_count })
-        except PyMongoError as e:
-            return False
-            # return jsonify({ "status": "fail", "code": 300, "message": f"Failed to update document from collection '{db}.{collection_name}' error: {e}" })
+            collection = self.client[db][collection_name]
+            result = collection.update_one(query, {'$set': new_values})
+            if result.matched_count > 0:
+                if result.modified_count > 0:
+                    return True
+                raise ValueError(f"update - No updates applied on '{db}/{collection_name}'. Data up to date.")
+            raise ValueError(f"update - No match found on '{db}/{collection_name}'.")
+        except PyMongoError as err:
+            raise ValueError(f"update - Error while trying to update a document on '{db}/{collection_name}': {err}")
 
     def delete(self, db, collection_name, query):
         """
@@ -142,11 +130,11 @@ class MongoController:
         :param query: Search filter
         :return: Number of deleted documents
         """
-        collection = self.client[db][collection_name]
         try:
+            collection = self.client[db][collection_name]
             result = collection.delete_one(query)
-            return True
-            # return jsonify({ "status": "ok", "code": 200, "message": f"{result.deleted_count } Document(s) succesfully deleted in '{db}.{collection_name}'.", "count": result.deleted_count })
-        except PyMongoError as e:
-            return False
-            # return jsonify({ "status": "fail", "code": 300, "message": f"Failed to update document from collection '{db}.{collection_name}' error: {e}" })
+            if result.deleted_count == 1:
+                return True
+            raise ValueError(f"delete - There's no entry matching your query on '{db}/{collection_name}'")
+        except PyMongoError as err:
+            raise ValueError(f"delete - Error while trying to delete a document on '{db}/{collection_name}': {err}")
