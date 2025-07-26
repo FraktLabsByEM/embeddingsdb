@@ -5,12 +5,7 @@ import decord
 import tempfile
 import soundfile as sf
 import torch
-<<<<<<< HEAD
-# import openl3
-# import whisper
-=======
 import whisper
->>>>>>> temp
 import librosa
 import numpy as np
 import pytesseract
@@ -20,22 +15,12 @@ from docx import Document
 from PyPDF2 import PdfReader
 from pptx import Presentation
 from pdf2image import convert_from_bytes
-<<<<<<< HEAD
-# from sentence_transformers import SentenceTransformer
-=======
->>>>>>> temp
 from moviepy.video.io.VideoFileClip import VideoFileClip
 from imagebind.models import imagebind_model
 from imagebind.models.imagebind_model import ModalityType
 from imagebind.data import load_and_transform_audio_data, load_and_transform_vision_data, load_and_transform_text
 
-<<<<<<< HEAD
-from audioclip import AudioClip
-
-logging.set_verbosity_error()  # Reduce unneeded logs
-=======
 print("Imports ok!")
->>>>>>> temp
 
 plain_text_types = [
         "text/plain",                      # TXT
