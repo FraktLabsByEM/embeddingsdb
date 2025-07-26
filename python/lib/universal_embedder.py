@@ -60,14 +60,17 @@ class UniversalEmbedder:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
             # Init transcription model
             self.tr_model = whisper.load_model("small", device=self.device)
+            print("Whisper loaded!")
             # Configure tesserract
             self.tesseract_path = "/usr/bin/tesseract"  # Path to tesseract
             pytesseract.pytesseract.tesseract_cmd = self.tesseract_path
+            print("Tesseract loaded!")
             # Imagebind model (512D shared embedding space for text, image, audio)
             print(f"Attempting to load embedding models into {self.device}")
             self.model = imagebind_model.imagebind_huge(pretrained=True).to(self.device)
             self.model.eval()
             self.audio_sample_rate = 44100
+            print("ImageBind loaded!")
         except Exception as err:
             print(f"UniversalEmbederr constructor error: {err}")
 
