@@ -59,7 +59,7 @@ class UniversalEmbedder:
         try:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
             # Init transcription model
-            self.tr_model = whisper.load_model("small", device=self.device)
+            self.tr_model = whisper.load_model("base", device=self.device)
             print("Whisper loaded!")
             # Configure tesserract
             self.tesseract_path = "/usr/bin/tesseract"  # Path to tesseract
