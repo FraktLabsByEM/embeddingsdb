@@ -103,7 +103,7 @@ class UniversalEmbedder:
                     # Process whole file content
                     chunks = [text]
                     return {
-                        "bytes": [self.text_model.encode(chunk).tolist() if storable else self.text_model.encode(chunk) for chunk in chunks],
+                        "bytes": [self.embed_text(chunk, storable) for chunk in chunks],
                         "raw": chunks
                     }
                     
@@ -124,11 +124,12 @@ class UniversalEmbedder:
                         print("Applying OCR to scanned PDF")
                         images = convert_from_bytes(decoded_data, dpi=300)
                         for image in images:
-                            ocr_text = self.ocr_image(image)
+                            ocr_text = self.ocr_image(image).strip()
                             chunks.append(ocr_text)
+                    all_results = [self.embed_text(chunk, storable) for chunk in chunks]
                     return {
-                        "bytes": [self.text_model.encode(chunk).tolist() if storable else self.text_model.encode(chunk) for chunk in chunks],
-                        "raw": chunks
+                        "bytes": [item for sublist in all_results for item in sublist["bytes"]],
+                        "raw": [item for sublist in all_results for item in sublist["raw"]]
                     }
 
                 # Word (DOCX)

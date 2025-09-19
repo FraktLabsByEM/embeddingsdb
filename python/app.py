@@ -20,13 +20,15 @@ def add(db, coll, input, name):
         embedding_result = embedder.embed({ "input": input }, storable=True)
         bytes_embeddings = embedding_result.get("bytes", [])
         raw_data = embedding_result.get("raw", [])
+        print(len(bytes_embeddings))
 
         if not bytes_embeddings or not raw_data:
             return jsonify({"error": "Failed to generate embeddings"}), 500
 
         # Insert embeddings into Faiss
         faiss_ids = faiss.add(db, coll, bytes_embeddings)
-        if not faiss_ids:
+        print(f"Faiss ids: {faiss_ids}")
+        if faiss_ids is None:
             return jsonify({"error": "Failed to insert embeddings into Faiss"}), 500
 
         # Prepare document for MongoDB
@@ -38,13 +40,20 @@ def add(db, coll, input, name):
 
         # Insert into MongoDB
         mongo.insert(db, coll, document)
+        print("Inserted in mongo")
         return faiss_ids, False
     except Exception as err:
+        print(f"Error in add(): {err}")
         return False, err
 
+emb_lens = {
+    "text": 384,
+    "image": 8192,
+}
 
 @app.route("/v1/embeddings/<string:db>/<string:coll>/create", methods=["POST"])
 def create_index(db, coll):
+    global emb_lens
     """
     Crea un nuevo índice Faiss vacío.
     
