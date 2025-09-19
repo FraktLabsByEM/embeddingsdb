@@ -67,15 +67,16 @@ class UniversalEmbedder:
         self.tr_model = whisper.load_model("small")
         pytesseract.pytesseract.tesseract_cmd = self.tesseract_path
 
-    def embed(self, data, storable = False):
+    def embed(self, data, storable = False, cross=False):
         """
-            Arguments:
-                data(json request params):
-                    - input: plain text or base64
-            Returns:
-                object(images do not return raw):
-                    - emb: [0,1,2,3],
-                    - raw: ["paragraph1", "paragraph1"]
+        Arguments:
+            data (str): plain text or base64
+            storable (bool): Result will be stored (keep object structure)
+            cross (bool): Cross search? text only
+        Returns:
+            object(images do not return raw):
+                - emb: [0,1,2,3],
+                - raw: ["paragraph1", "paragraph1"]
         """
         
         try:
@@ -178,20 +179,19 @@ class UniversalEmbedder:
                 elif header in image_types:
                     print("Image file (JPG, PNG, GIF, BMP, TIFF)")
                     
-                    with io.BytesIO(decoded_data) as image_buffer:
-                        image = Image.open(image_buffer).convert("RGB")  # Load the image and convert to RGB
-                        image_array = np.array(image) / 255.0  # Normalize pixel values
-                        image_embedding = openl3.get_image_embedding(image_array, content_type="env").flatten()  # Generate image embedding
+                    chunks = []
+                    embeddings = []
+                    if not cross:
+                        with io.BytesIO(decoded_data) as image_buffer:
+                            image = Image.open(image_buffer).convert("RGB")  # Load the image and convert to RGB
+                            image_array = np.array(image) / 255.0  # Normalize pixel values
+                            image_embedding = openl3.get_image_embedding(image_array, content_type="env").flatten()  # Generate image embedding
+                            # Store the image embedding as a chunk
+                            chunks.append("Image embedding")
+                            embeddings.append(image_embedding.tolist() if storable else image_embedding)
                     
                     # Extract text using OCR
                     ocr_text = self.ocr_image(decoded_data).strip()
-                    
-                    chunks = []
-                    embeddings = []
-                    
-                    # Store the image embedding as a chunk
-                    chunks.append("Image embedding")
-                    embeddings.append(image_embedding.tolist() if storable else image_embedding)
 
                     # Store OCR text as a separate chunk if text was found
                     if ocr_text:
@@ -206,22 +206,21 @@ class UniversalEmbedder:
                 # Audios (MP3, WAV, OGG, AAC)
                 elif header in ["audio/mpeg", "audio/wav", "audio/ogg", "audio/aac"]:
                     print("Audio file (MP3, WAV, OGG, AAC)")
-                    
-                    with io.BytesIO(decoded_data) as audio_buffer:
-                        audio, sr = librosa.load(audio_buffer, sr=self.audio_sample_rate)  # Load the audio file
-                        audio_embedding = openl3.get_audio_embedding(audio, sr, content_type="env").flatten()  # Generate audio embedding
+
+                    chunks = []
+                    embeddings = []
+                    if not cross:
+                        with io.BytesIO(decoded_data) as audio_buffer:
+                            audio, sr = librosa.load(audio_buffer, sr=self.audio_sample_rate)  # Load the audio file
+                            audio_embedding = openl3.get_audio_embedding(audio, sr, content_type="env").flatten()  # Generate audio embedding
+                            # Store the audio embedding as a chunk
+                            chunks.append("Audio embedding")
+                            embeddings.append(audio_embedding.tolist() if storable else audio_embedding)
 
                     # Transcribe speech to text using Whisper
                     with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as temp_audio:
                         sf.write(temp_audio.name, audio, sr)  # Save audio as WAV
                         transcribed_text = self.tr_model.transcribe(temp_audio.name)["text"].strip()
-
-                    chunks = []
-                    embeddings = []
-
-                    # Store the audio embedding as a chunk
-                    chunks.append("Audio embedding")
-                    embeddings.append(audio_embedding.tolist() if storable else audio_embedding)
 
                     # Store transcribed text as a separate chunk if speech was detected
                     if transcribed_text.strip():
@@ -236,31 +235,37 @@ class UniversalEmbedder:
                 # Videos (MP4, AVI, MKV, WEBM, MOV)
                 elif header in ["video/mp4", "video/x-msvideo", "video/x-matroska", "video/webm", "video/quicktime"]:
                     print("Video file (MP4, AVI, MKV, WEBM, MOV)")
+                    
+                    chunks = []
+                    embeddings = []
 
-                    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as temp_video:
-                        temp_video.write(decoded_data)
-                        temp_video.flush()  # Ensure data is written before reading
-                        temp_video_path = temp_video.name  # Store file path
+                    if not cross:
+                        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as temp_video:
+                            temp_video.write(decoded_data)
+                            temp_video.flush()  # Ensure data is written before reading
+                            temp_video_path = temp_video.name  # Store file path
 
-                        try:
-                            # Extract audio
-                            video = VideoFileClip(temp_video_path)
-                            audio_path = temp_video_path.replace(".mp4", ".wav")
-                            video.audio.write_audiofile(audio_path, codec="pcm_s16le", fps=self.audio_sample_rate)
+                            try:
+                                # Extract audio
+                                video = VideoFileClip(temp_video_path)
+                                audio_path = temp_video_path.replace(".mp4", ".wav")
+                                video.audio.write_audiofile(audio_path, codec="pcm_s16le", fps=self.audio_sample_rate)
 
-                            # Extract frames for video embedding
-                            vr = decord.VideoReader(temp_video_path)
-                            frames = [vr[i].asnumpy() for i in range(0, len(vr), max(1, len(vr)//10))]  # Sample 10 frames
+                                # Extract frames for video embedding
+                                vr = decord.VideoReader(temp_video_path)
+                                frames = [vr[i].asnumpy() for i in range(0, len(vr), max(1, len(vr)//10))]  # Sample 10 frames
 
-                            # Generate video embedding
-                            video_embedding = np.mean(
-                                [openl3.get_image_embedding(frame, content_type="env").flatten() for frame in frames], axis=0
-                            )
+                                # Generate video embedding
+                                video_embedding = np.mean(
+                                    [openl3.get_image_embedding(frame, content_type="env").flatten() for frame in frames], axis=0
+                                )
+                                chunks.append("Video embedding")
+                                embeddings.append(video_embedding.tolist() if storable else video_embedding)
 
-                        finally:
-                            os.remove(temp_video_path)
-                            if 'audio_path' in locals() and os.path.exists(audio_path):
-                                os.remove(audio_path)
+                            finally:
+                                os.remove(temp_video_path)
+                                if 'audio_path' in locals() and os.path.exists(audio_path):
+                                    os.remove(audio_path)
 
 
                     # Generate audio embedding & transcription
@@ -268,14 +273,11 @@ class UniversalEmbedder:
                         audio_data, _ = librosa.load(audio_path, sr=self.audio_sample_rate)
                         sf.write(temp_audio.name, audio_data, self.audio_sample_rate)
                         transcribed_text = self.tr_model.transcribe(temp_audio.name)["text"].strip()
-                        audio_embedding = openl3.get_audio_embedding(audio_data, self.audio_sample_rate, content_type="env").flatten()
-
-                    chunks = ["Video embedding"]
-                    embeddings = [video_embedding.tolist() if storable else video_embedding]
-
-                    # Store audio embedding
-                    chunks.append("Audio embedding")
-                    embeddings.append(audio_embedding.tolist() if storable else audio_embedding)
+                        if not cross:
+                            audio_embedding = openl3.get_audio_embedding(audio_data, self.audio_sample_rate, content_type="env").flatten()
+                            # Store audio embedding
+                            chunks.append("Audio embedding")
+                            embeddings.append(audio_embedding.tolist() if storable else audio_embedding)
 
                     # Store transcribed text if speech is detected
                     if transcribed_text.strip():
@@ -289,48 +291,53 @@ class UniversalEmbedder:
 
                 # Tipo desconocido
                 else:
-                    print("Unknown file type")
-                    return {
-                        "status": "error",
-                        "message": "Unknown file type"
-                    }
+                    raise ValueError(f"Universal embedder error on embed: Unknown file type.")
                     
-        except Exception as e:
-            print(f"Error processing file: {e}")
-            return {
-                "status": "error",
-                "message": str(e)
-            }
+        except Exception as err:
+            raise ValueError(f"Universal embedder error on embed: {err}")
 
     def embed_text(self, text, storable):
         """Generate text embeddings"""
-        chunks = text.split("\n")
-        response = {
-            "bytes": [],
-            "raw": []
-        }
-        for chunk in chunks:
-            chunk = chunk.strip()  # remove spaces
-            if chunk:  # Validate non empty string
-                response["raw"].append(chunk)
-                response["bytes"].append(self.text_model.encode(chunk).tolist() if storable else self.text_model.encode(chunk))
-        return response
+        try:
+            chunks = text.split("\n")
+            response = {
+                "bytes": [],
+                "raw": []
+            }
+            for chunk in chunks:
+                chunk = chunk.strip()  # remove spaces
+                if chunk:  # Validate non empty string
+                    response["raw"].append(chunk)
+                    response["bytes"].append(self.text_model.encode(chunk).tolist() if storable else self.text_model.encode(chunk))
+            return response
+                    
+        except Exception as err:
+            raise ValueError(f"Universal embedder error on embed_text: {err}")
 
     def embed_image(self, image_bytes):
         """Generate image embeddings using OpenL3."""
-        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        image = np.array(image) / 255.0  # Normalise
-        emb = openl3.get_image_embedding(image, content_type="env")  # `env` = environment embeddings
-        return emb.flatten()
+        try:
+            image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+            image = np.array(image) / 255.0  # Normalise
+            emb = openl3.get_image_embedding(image, content_type="env")  # `env` = environment embeddings
+            return emb.flatten()
+        except Exception as err:
+            raise ValueError(f"Universal embedder error on embed_image: {err}")
 
     def embed_audio(self, audio_bytes):
         """Generate audio embeddings using OpenL3."""
-        audio_buffer = io.BytesIO(audio_bytes)
-        audio, sr = librosa.load(audio_buffer, sr=self.audio_sample_rate)
-        emb = openl3.get_audio_embedding(audio, sr, content_type="env")
-        return emb.flatten()
+        try:
+            audio_buffer = io.BytesIO(audio_bytes)
+            audio, sr = librosa.load(audio_buffer, sr=self.audio_sample_rate)
+            emb = openl3.get_audio_embedding(audio, sr, content_type="env")
+            return emb.flatten()
+        except Exception as err:
+            raise ValueError(f"Universal embedder error on embed_audio: {err}")
 
     def ocr_image(self, image_bytes):
         """Apply OCR to provided image"""
-        img = Image.open(io.BytesIO(image_bytes))
-        return pytesseract.image_to_string(img)
+        try:
+            img = Image.open(io.BytesIO(image_bytes))
+            return pytesseract.image_to_string(img)
+        except Exception as err:
+            raise ValueError(f"Universal embedder error on ocr_image: {err}")
