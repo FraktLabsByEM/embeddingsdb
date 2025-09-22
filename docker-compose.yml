@@ -5,17 +5,9 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "5000:5000"  # Exponer el puerto de Flask
+      - "3247:3247"  # Exponer el puerto de Flask
     volumes:
-      - ./data:/appdata  # Persistencia de datos de MongoDB
-      # - ./python:/app  # Montar el código de la aplicación dentro del contenedor
-      # - ./init.sh:/usr/local/bin/init.sh
+      - ./data:/appdata  # Persistencia de datos de MongoDB + faiss
     environment:
-      - PYTHONUNBUFFERED=1  # Evita problemas de buffering en logs
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
+      - PYTHONUNBUFFERED=1
+      - ADMIN_PASS=snlrdev2025

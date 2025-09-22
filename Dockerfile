@@ -43,7 +43,7 @@ COPY /python /app/
 
 
 # Exponer puertos de MongoDB y Flask
-EXPOSE 27017 5000
+EXPOSE 27017 3247
 
 # Comando de inicio
 ENTRYPOINT ["/usr/local/bin/init.sh"]

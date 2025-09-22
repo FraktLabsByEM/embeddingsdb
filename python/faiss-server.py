@@ -1,9 +1,10 @@
-import json
-from flask import Flask, request, jsonify
+import os
+import time
 from flask_cors import CORS
+from flask import Flask, request, jsonify
+from lib.faiss_controller import FaissController
 from lib.mongo_controller import MongoController
 from lib.universal_embedder import UniversalEmbedder
-from lib.faiss_controller import FaissController
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -13,6 +14,40 @@ CORS(app)
 mongo = MongoController()
 embedder = UniversalEmbedder()
 faiss = FaissController()
+
+# Retrieve Admin pass
+ADMIN_PASS = os.getenv("ADMIN_PASS") or "snlrdev2025"
+
+
+# ----------------------------------------
+# --------------- Response standards -----
+# ----------------------------------------
+
+def user_error(error):
+    """
+    Args:
+        error (str): Error message
+    """
+    print(f"[USER_ERROR] -> {error}")
+    return jsonify({ "status": "fail", "error": error }), 400
+
+def server_error(error):
+    """
+    Args:
+        error (str): Error message
+    """
+    print(f"[SERVER_ERROR] -> {error}")
+    return jsonify({ "status": "fail", "error": f"Server error: {error}" }), 500
+
+def success(response):
+    """
+    Args:
+        response (dict): Response object
+    """
+    response["status"] = "ok"
+    return jsonify(response), 200
+
+
 
 def add(db, coll, input, name):
     try:
@@ -42,148 +77,147 @@ def add(db, coll, input, name):
     except Exception as err:
         return False, err
 
-
-@app.route("/v1/embeddings/<string:db>/<string:coll>/create", methods=["POST"])
-def create_index(db, coll):
-    """
-    Crea un nuevo índice Faiss vacío.
-    
-    Expected JSON body:
-        - neighboors (int): Número de vecinos para el índice HNSW
-        - length (int): Dimensión de los vectores a almacenar
-    """
-    try:
-        request_data = request.get_json()
-        if not request_data:
-            return jsonify({"error": "Invalid request format"}), 400
-        
-        neighboors = request_data.get("neighboors")
-        ln = request_data.get("length")
-
-        if neighboors is None or ln is None:
-            return jsonify({"error": "Missing required fields: 'neighboors' and/or 'length'"}), 400
-
-        result = faiss.create(db, coll, neighboors, ln)
-
-        if result is True:
-            return jsonify({"message": f"Index {db}/{coll} created successfully"}), 200
-        elif isinstance(result, dict) and "error" in result:
-            return jsonify(result), 400
-        else:
-            return jsonify({"error": "Unknown error occurred during index creation"}), 500
-
-    except Exception as e:
-        print(f"Error in create_index(): {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-# ----- ENDPOINTS -----
+# ----------------------------------------
+# --------------- ENDPOINTS --------------
+# ----------------------------------------
 @app.route("/v1/embeddings", methods=["POST"])
 def generate():
     """
-    Expected request JSON body:
-        - input (str): "plain text or base64"
+    Generate embeddings
+    ---
+    Args:
+        input (str): plain text or base64
     """
     try:
         # Validate request JSON
         request_data = request.get_json()
         if not request_data:
-            return jsonify({"error": "Invalid request format"}), 400
-
-        # Retrieve data
-        data = request_data.get("input")
-        
-        if not data:
-            return jsonify({"error": "'input' param must be provided"}), 400
+            return user_error("Invalid request format.")
+        if not "data" in request_data:
+            return user_error("Missing required parameter 'input'.")
         # Create embeddings
         print("generating embeddings")
         embedding_result = embedder.embed(request_data, storable=True)
-        print(f"generated embeddings {embedding_result}")
-        print("building response")
         
-        return jsonify({
-                "data": [
-                    {
-                        "object": "embedding",
-                        "index": index,
-                        "embedding": emb
-                    }
-                    for index, emb in enumerate(embedding_result["bytes"])
-                ],
-                "object": "list",
-                "model": "universal-embedder",
-                
-            }), 200
-    except Exception as e:
-        print(f"Error in generate(): {e}")
-        return jsonify({"error": str(e)}), 500
+        return success({
+            "data": [
+                {
+                    "object": "embedding",
+                    "index": index,
+                    "embedding": emb
+                }
+                for index, emb in enumerate(embedding_result["bytes"])
+            ],
+            "object": "list",
+            "model": "universal-embedder",
+        })
+        
+    except Exception as err:
+        return server_error(err)
+# -------------------------------------------------------------------
+
+@app.route("/v1/embeddings/<string:db>/<string:coll>/create", methods=["POST"])
+def create_index(db, coll):
+    """
+    Create a new empty faiss index.
+    ---
+    Args:
+        neighboors (int): Number of neighboors per cluster
+        length (int): Embedings dimension or length
+    """
+    try:
+        request_data = request.get_json()
+        # Validate params
+        if not request_data:
+            return user_error("Invalid request format.")
+        if not "neighboors" in request_data:
+            return user_error("Missing required parameter 'neighboors'.")
+        if not "length" in request_data:
+            return user_error("Missing required parameter 'length'.")
+        # Retrievve params
+        neighboors = request_data.get("neighboors")
+        ln = request_data.get("length")
+        # Create index
+        result = faiss.create(db, coll, neighboors, ln)
+
+        if result:
+            return success({"message": f"Index '{db}/{coll}' created successfully"})
+        else:
+            return server_error("Unknown error occurred during index creation")
+
+    except Exception as err:
+        return server_error(err)
+# -------------------------------------------------------------------
     
 
 @app.route("/v1/embeddings/<string:db>/<string:coll>/save", methods=["POST"])
 def save(db, coll):
     """ 
-    Expected request JSON body:
-        - input (str): "plain text or base64"
-        - file_name (str): "file name"
+    Save new embeddings
+    ---
+    Args:
+        input (str): Plain text or base64
+        file_name (str): File name or identifier
     """
     try:
-        # Validate request JSON
         request_data = request.get_json()
+        # Validate params
         if not request_data:
-            return jsonify({"error": "Invalid request format"}), 400
+            return user_error("Invalid request format")
+        if not "input" in request_data:
+            return user_error("Missing required parameter 'input'.")
+        if not "file_name" in request_data:
+            return user_error("Missing required parameter 'file_name'.")
 
         data = request_data.get("input")
         name = request_data.get("file_name")
 
-        if not name:
-            return jsonify({"error": "Missing required field: file_name"}), 400
+        faiss_ids = add(db, coll, data, name)
 
-        if not data:
-            return jsonify({"error": "'input' param must be provided"}), 400
-
-        faiss_ids, err = add(db, coll, data, name)
-
-        if not err:
-            return jsonify({"message": "Data saved successfully", "faiss_ids": faiss_ids}), 200
+        if faiss_ids:
+            return success({"message": "Data saved successfully", "faiss_ids": faiss_ids})
         else:
-            return jsonify({"error": str(err)}), 500
+            return server_error(f"Unknown error occurred while trying to add a new element on '{db}/{coll}'.")
 
-    except Exception as e:
-        print(f"Error in save(): {e}")
-        return jsonify({"error": str(e)}), 500
-
+    except Exception as err:
+        return server_error(err)
+# -------------------------------------------------------------------
 
 
 @app.route("/v1/embeddings/<string:db>/<string:coll>/search", methods=["POST"])
 def search(db, coll):
-    """ 
-    Expected request JSON body:
-        - input (str): "plain text or base64"
-        - k: Number of results to return (default = 5)
+    """
+    Semantic search on an index
+    ---
+    Args:
+        input (str): plain text or base64
+        k: Number of results to return (default = 5)
     """
     try:
-        # Validate request JSON
         request_data = request.get_json()
+        # Validate params
         if not request_data:
-            return jsonify({"error": "Invalid request format"}), 400
-
-        data = request_data.get("input")
+            return user_error("Invalid request format")
+        if not "input" in request_data:
+            return user_error("Missing required parameter 'input'.")
+        # Retrieve param
         k = request_data.get("k", 5)
-
-        if not data:
-            return jsonify({"error": "'input' param must be provided"}), 400
+        start_time = time.time()
 
         # Generate embedding for the search query
         embedding_result = embedder.embed(request_data, storable=True)
         query_embedding = embedding_result.get("bytes", [])
 
         if not query_embedding:
-            return jsonify({"error": "Failed to generate embedding for query"}), 500
+            return server_error(f"Failed to generate embedding for reverse search on '{db}/{coll}'")
 
         # Search in Faiss
         search_results = faiss.search(db, coll, query_embedding[0], k)  # Query with first embedding
+        
+        # Validate results
         if not search_results:
-            return jsonify({"message": "No matches found"}), 200
+            end_time = time.time()
+            return success({ "matches": {}, "message": "No matches found.", "latency": end_time - start_time })
 
         faiss_ids = list(search_results.keys())
         faiss_scores = list(search_results.values())
@@ -205,30 +239,33 @@ def search(db, coll):
                     }
                 ]
         
-        return jsonify({"matches": results}), 200
+        # Build response
+        end_time = time.time()
+        return success({"matches": results, "message": f"{len(faiss_ids)} matches found.", "latency": end_time - start_time})
 
-    except Exception as e:
-        print(f"Error in search(): {e}")
-        return jsonify({"error": str(e)}), 500
-
+    except Exception as err:
+        return server_error(err)
+# -------------------------------------------------------------------
 
 
 @app.route("/v1/embeddings/<string:db>/<string:coll>/delete", methods=["POST"])
 def delete(db, coll):
-    """ 
-    Expected request JSON body:
-        - file_name: File name
+    """
+    Delete embedding from db
+    ---
+    Args:
+        file_name (str): File name or identifier
     """
     try:
         # Validate request JSON
         request_data = request.get_json()
         if not request_data or "file_name" not in request_data:
-            return jsonify({"error": "Missing required field: file_name"}), 400
+            return user_error("Missing required parameter 'file_name'.")
 
         filename = request_data["file_name"]
         query = { "name": filename }
         
-        # Fetch all documents
+        # Fetch all documents from mongo
         full_docs = mongo.find_all(db, coll)
         
         deleted_embeddings = 0
@@ -258,44 +295,50 @@ def delete(db, coll):
         # Remove document
         deleted = mongo.delete(db, coll, query)
         # Update mongo documents
-        
         if emb_deleted and updated_ok and deleted:
-            return jsonify({"message": f"Deleted 1 document and {deleted_embeddings} embeddings"}), 200
+            return success({"message": f"Deleted 1 document and {deleted_embeddings} embeddings"})
         else:
-            return jsonify({"message": f"Something went wrong!", "index_deleted": emb_deleted, "updated": updated_ok, "mongo_del": deleted }), 200
+            return server_error(f"Unknown error occurred while trying to remove an element on '{db}/{coll}'.")
 
-    except Exception as e:
-        print(f"Error in delete(): {e}")
-        return jsonify({"error": str(e)}), 500
+    except Exception as err:
+        return server_error(err)
+# -------------------------------------------------------------------
 
 
 
 @app.route("/v1/embeddings/<string:db>/<string:coll>/update", methods=["POST"])
 def update(db, coll):
-    """ 
-    Expected request JSON body:
-        - input (str): "plain text or base64"
-        - file_name (str): File asociated name
+    """
+    Update embeddings on index.
+    ---
+    Args:
+        input (str): plain text or base64
+        file_name (str): File name or identifier
     """
     try:
-        # Validate request JSON
         request_data = request.get_json()
-        if not request_data or "file_name" not in request_data or "input" not in request_data:
-            return jsonify({"error": "Missing required field: file_name"}), 400
+        # Validate request params
+        if not request_data:
+            return user_error("Invalid request format.")
+        if not "input" in request_data:
+            return user_error("Missing required parameter 'input'.")
+        if not "file_name" in request_data:
+            return user_error("Missing required parameter 'file_name'.")
 
         file_name = request_data["file_name"]
+        new_data = request_data["input"]
+        
+        # Mongo query
         query = { "name": file_name }
-        new_data = request_data.get("input")
 
         # Fetch all documents
         full_docs = mongo.find_all(db, coll)
         
-        deleted_embeddings = 0
         # Drop faiss index
         emb_deleted =  faiss.delete_index(db, coll)
         
         updated_ok = True
-        # Remove deleted document
+        # Remove deleted document while recreating index
         for doc in full_docs:
             if 'name' in doc and doc['name'] != file_name:
                 # Loop thru all raw chunks
@@ -311,116 +354,72 @@ def update(db, coll):
                 updated_ok = mongo.update(db, coll, { "name": doc["name"] }, { "faiss_ids": new_ids })
                 if not updated_ok:
                     break
-            elif 'name' in doc:
-                deleted_embeddings = len(doc["faiss_ids"])
         
         # Remove document
         deleted = mongo.delete(db, coll, query)
         # Add new document
-        add(db, coll, {"input": new_data}, file_name)
+        fids = add(db, coll, {"input": new_data}, file_name)
         
         if emb_deleted and updated_ok and deleted:
-            return jsonify({"message": f"Updated 1 document and {deleted_embeddings} embeddings"}), 200
+            return success({"message": f"Updated 1 document with {len(fids)} embeddings"})
         else:
-            return jsonify({"message": f"Something went wrong!", "index_deleted": emb_deleted, "updated": updated_ok, "mongo_del": deleted }), 200
+            return server_error(f"Unknown error occurred while trying to remove an element on '{db}/{coll}'.")
 
-    except Exception as e:
-        print(f"Error in update(): {e}")
-        return jsonify({"error": str(e)}), 500
+    except Exception as err:
+        return server_error(err)
+# -------------------------------------------------------------------
 
 
 
 @app.route("/v1/embeddings/<string:db>/<string:coll>/drop", methods=["POST"])
 def drop(db, coll):
     """ 
-    Expected request JSON body:
-        - pass: "Sanolivar2024*" (required)
-        ++
+    Drop faiss index
+    ---
+    Args:
+        pass: Administrator password
     """
     try:
-        # Validate request JSON
         request_data = request.get_json()
-        if not request_data or "pass" not in request_data:
-            return jsonify({"error": "Missing required field: pass"}), 400
+        # Validate request params
+        if not request_data:
+            return user_error("Invalid request format.")
+        if not "pass" in request_data:
+            return user_error("Missing required parameter 'pass'.")
 
         # Validate password
-        if request_data["pass"] != "Sanolivar2024*":
-            return jsonify({"error": "Unauthorized"}), 403
+        if request_data["pass"] != ADMIN_PASS:
+            return user_error("Unauthorized")
 
         # Delete the collection from MongoDB
         mongo.drop_cl(db, coll)
 
         # Delete the Faiss index (removes from RAM and disk)
         if faiss.delete_index(db, coll):
-            return jsonify({"message": f"Collection {db}/{coll} has been fully deleted"}), 200
+            return success({"message": f"Index '{db}/{coll}' has been fully deleted."})
         else:
-            return jsonify({"message": f"MongoDB collection deleted, but Faiss index not found"}), 200
+            return server_error(f"Unknown error occurred while trying to remove index '{db}/{coll}'.")
 
-    except Exception as e:
-        print(f"Error in drop(): {e}")
-        return jsonify({"error": str(e)}), 500
+    except Exception as err:
+        return server_error(err)
+# -------------------------------------------------------------------
 
-@app.route("/v1/embeddings/<string:db>/<string:coll>/mongotest", methods=["POST"])
-def test(db, coll):
-    """ 
-    Expected request JSON body:
-        - input (str): "plain text or base64"
-        - k: Number of results to return (default = 5)
+@app.route("/v1/embeddings/<string:db>/<string:coll>/raw", methods=["POST"])
+def raw(db, coll):
+    """
+    Get raw data from index
+    ---
     """
     try:
-        tmp = mongo.find_all(db, coll)
-        print(tmp)
-        return jsonify(tmp), 200
-        # Validate request JSON
-        request_data = request.get_json()
-        if not request_data:
-            return jsonify({"error": "Invalid request format"}), 400
+        start_time = time.time()
+        result = mongo.find_all(db, coll)
+        end_time = time.time()
+        return success({"matches": result, "message": f"{len(result)} matches found.", "latency": end_time - start_time})
+    except Exception as err:
+        return server_error(err)
+# -------------------------------------------------------------------
 
-        data = request_data.get("input")
-        k = request_data.get("k", 5)
-
-        if not data:
-            return jsonify({"error": "'input' param must be provided"}), 400
-
-        # Generate embedding for the search query
-        embedding_result = embedder.embed(request_data, storable=True)
-        query_embedding = embedding_result.get("bytes", [])
-
-        if not query_embedding:
-            return jsonify({"error": "Failed to generate embedding for query"}), 500
-
-        # Search in Faiss
-        search_results = faiss.search(db, coll, query_embedding[0], k)  # Query with first embedding
-        if not search_results:
-            return jsonify({"message": "No matches found"}), 200
-
-        faiss_ids = list(search_results.keys())
-        faiss_scores = list(search_results.values())
-        results = {}
-        # Retrieve documents from MongoDB based on Faiss IDs
-        for fid in faiss_ids:
-            query = {"faiss_ids": {"$in": [fid]}}
-            tmp = mongo.find_all(db, coll)
-            print(tmp)
-            # if tmp["name"] in results: # If document exists in results, add new element
-            #     results[tmp["name"]].append({
-            #         "content": tmp["raw"][tmp["faiss_ids"].index(fid)],
-            #         "score": faiss_scores[faiss_ids.index(fid)]
-            #     })
-            # else: # create result for document
-            #     results[tmp["name"]] = [
-            #         {
-            #             "content": tmp["raw"][tmp["faiss_ids"].index(fid)],
-            #             "score": faiss_scores[faiss_ids.index(fid)]
-            #         }
-            #     ]
-        
-        return jsonify({"matches": results}), 200
-
-    except Exception as e:
-        print(f"Error in search(): {e}")
-        return jsonify({"error": str(e)}), 500
 
 # ----- START SERVER -----
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=3247, debug=True)
